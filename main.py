@@ -13,15 +13,28 @@ def main(page: ft.Page):
     page.scroll = "auto"
     page.padding = 20
 
-    # 配置路径（针对打包后的内部路径）
-    DATA_PATH = "assets/data.xlsx"
-    TPL_PATH = "assets/template.xlsx"
-    CACHE_DIR = "temp_cache"
-
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
+    # --- 路径兼容性设置 ---
+    # 获取当前脚本所在目录的绝对路径
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 指向 assets 文件夹中的 Excel
+    DATA_PATH = os.path.join(base_dir, "assets", "data.xlsx")
+    TPL_PATH = os.path.join(base_dir, "assets", "template.xlsx")
+    
+    # 缓存目录：在手机应用私有目录下创建
+    CACHE_DIR = os.path.join(base_dir, "temp_cache")
 
     # UI 变量
+    status_text = ft.Text("", color="blue")
+    
+    # 初始化检查（防止白屏的关键）
+    try:
+        if not os.path.exists(CACHE_DIR):
+            os.makedirs(CACHE_DIR)
+    except Exception as e:
+        page.add(ft.Text(f"创建缓存目录失败: {str(e)}", color="red"))
+
+    # UI 控件定义
     search_input = ft.TextField(label="🔍 客户关键字", variant=ft.IndicatorCode.UNDERLINE, border_color="blue")
     product_input = ft.TextField(label="📦 产品名称", variant=ft.IndicatorCode.UNDERLINE)
     count_input = ft.TextField(label="📊 件数", variant=ft.IndicatorCode.UNDERLINE, keyboard_type=ft.KeyboardType.NUMBER)
@@ -32,22 +45,24 @@ def main(page: ft.Page):
         ],
         selected={"常温"}
     )
-    status_text = ft.Text("", color="gray")
 
     def clean_cache():
         """清理缓存文件夹"""
+        if not os.path.exists(CACHE_DIR):
+            return
         for filename in os.listdir(CACHE_DIR):
             file_path = os.path.join(CACHE_DIR, filename)
             try:
-                if os.path.isfile(file_path) or os.path.is_link(file_path):
+                if os.path.isfile(file_path):
                     os.unlink(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
             except Exception as e:
                 print(f"清理失败: {e}")
 
     def search_customer(keyword):
+        # 调试：检查文件是否存在
         if not os.path.exists(DATA_PATH):
+            status_text.value = f"❌ 找不到数据库文件:\n{DATA_PATH}"
+            page.update()
             return None
         try:
             wb = openpyxl.load_workbook(DATA_PATH, data_only=True)
@@ -65,7 +80,9 @@ def main(page: ft.Page):
                     matches[str(cell_value)] = info
             wb.close()
             return matches
-        except:
+        except Exception as e:
+            status_text.value = f"读取异常: {str(e)}"
+            page.update()
             return None
 
     def handle_generate(e):
@@ -80,17 +97,19 @@ def main(page: ft.Page):
         page.update()
 
         matches = search_customer(keyword)
+        if matches is None: return # 报错了
+        
         if not matches:
-            status_text.value = "❌ 未找到客户"
+            status_text.value = "❌ 未找到该客户，请检查关键字"
             page.update()
             return
 
         if len(matches) == 1:
             process_excel(list(matches.values())[0])
         else:
-            # 多选列表
             def select_and_go(name):
                 dlg.open = False
+                page.update()
                 process_excel(matches[name])
 
             list_items = [ft.ListTile(title=ft.Text(n), on_click=lambda _, n=n: select_and_go(n)) for n in matches.keys()]
@@ -101,11 +120,13 @@ def main(page: ft.Page):
 
     def process_excel(info):
         try:
-            status_text.value = "📝 正在生成表格..."
+            status_text.value = "📝 正在读取模板..."
             page.update()
 
-            # 清理旧缓存
-            clean_cache()
+            if not os.path.exists(TPL_PATH):
+                status_text.value = f"❌ 找不到模板文件:\n{TPL_PATH}"
+                page.update()
+                return
 
             # 打开模板
             wb = openpyxl.load_workbook(TPL_PATH)
@@ -121,27 +142,21 @@ def main(page: ft.Page):
 
             # 保存到临时缓存
             filename = f"提货明细_{info[0]}_{today.strftime('%m%d%H%M')}.xlsx"
-            temp_file_path = os.path.abspath(os.path.join(CACHE_DIR, filename))
+            temp_file_path = os.path.join(CACHE_DIR, filename)
             wb.save(temp_file_path)
             wb.close()
 
-            status_text.value = "✅ 生成成功，准备分享"
+            status_text.value = f"✅ 生成成功！正在唤起分享..."
             page.update()
 
-            # 唤起手机分享
+            # 唤起手机分享（Flet 在安卓上的高级功能）
             page.share_files([temp_file_path])
             
-            # 延时一点时间后清理（确保分享动作已读取文件）
-            time.sleep(2)
-            clean_cache()
-            status_text.value = "🧹 缓存已安全清理"
-            page.update()
-
         except Exception as ex:
-            status_text.value = f"错误: {str(ex)}"
+            status_text.value = f"🚨 程序错误: {str(ex)}"
             page.update()
 
-    # UI 布局
+    # --- UI 布局 ---
     page.add(
         ft.Column([
             ft.Container(
@@ -154,16 +169,17 @@ def main(page: ft.Page):
             count_input,
             ft.Text("🌡️ 选择温度:"),
             temp_dropdown,
-            ft.Divider(height=20, color="transparent"),
+            ft.Divider(height=10, color="transparent"),
             ft.ElevatedButton(
-                "🚀 生成并分享",
+                "🚀 生成并打开分享",
                 on_click=handle_generate,
                 style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                 width=400,
                 height=50
             ),
-            ft.Container(status_text, alignment=ft.alignment.center)
+            ft.Container(status_text, alignment=ft.alignment.center, padding=10)
         ])
     )
 
+# 确保 assets_dir 指向正确的文件夹名称
 ft.app(target=main, assets_dir="assets")
