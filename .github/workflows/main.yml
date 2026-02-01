@@ -14,6 +14,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install --upgrade pip
           pip install flet openpyxl
 
       - name: Setup Java
@@ -29,8 +30,8 @@ jobs:
 
       - name: Build APK
         run: |
-          # 确保 assets 文件夹被正确打包
-          flet build apk --assets assets
+          # 最新版 Flet 会自动识别同目录下的 assets 文件夹
+          flet build apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
